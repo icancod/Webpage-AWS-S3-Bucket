@@ -1,0 +1,32 @@
+AWS RESOURCE REPORT
+============================================================
+
+S3 BUCKET DETAILS
+Bucket Name: 2547245s3
+------------------------------------------------------------
+Folder Name : efolder
+Object Name : efolder/
+Object Size : 0 bytes
+----------------------------------------
+Folder Name : efolder
+Object Name : efolder/employee_file.xlsx
+Object Size : 9060 bytes
+----------------------------------------
+Folder Name : ufolder
+Object Name : ufolder/
+Object Size : 0 bytes
+----------------------------------------
+Folder Name : ufolder
+Object Name : ufolder/user_file.xlsx
+Object Size : 9857 bytes
+----------------------------------------
+
+EC2 INSTANCE DETAILS
+------------------------------------------------------------
+Instance ID   : i-0b6043f27c64a939f
+Instance Name : 2547245-ubuntu
+Instance Type : t3.micro
+State         : running
+Public IP     : 44.200.53.251
+AZ            : us-east-1c
+----------------------------------------

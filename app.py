@@ -18,7 +18,7 @@ st.markdown(
         .login-shell {
             min-height: 76vh;
             display: flex;
-            align-items: center;
+            align-items: center; 
             justify-content: center;
         }
         .login-card {
@@ -191,7 +191,8 @@ if "logs" not in st.session_state:
     st.session_state.logs = []
 if "connected_region" not in st.session_state:
     st.session_state.connected_region = None
-
+if "ec2_client" not in st.session_state:
+    st.session_state.ec2_client = None
 
 with st.sidebar:
     if st.session_state.client:
@@ -201,11 +202,13 @@ with st.sidebar:
         if st.button("Disconnect", use_container_width=True):
             st.session_state.client = None
             st.session_state.connected_region = None
+            st.session_state.ec2_client = None
             append_log("Disconnected from AWS")
             st.rerun()
 
 
 client = st.session_state.client
+ec2_client = st.session_state.ec2_client
 
 if not client:
     st.markdown("<div class='login-shell'>", unsafe_allow_html=True)
@@ -247,9 +250,18 @@ if not client:
                 aws_session_token=tk or None,
                 region_name=region,
             )
+            ec2_client = boto3.client(
+                "ec2",
+                aws_access_key_id=ak,
+                aws_secret_access_key=sk,
+                aws_session_token=tk or None,
+                region_name=region,
+            )
             client.list_buckets()
             st.session_state.client = client
+            st.session_state.ec2_client = ec2_client
             st.session_state.connected_region = region
+            
             append_log(f"Connected to AWS in {region}")
             st.rerun()
         except Exception as e:
@@ -291,7 +303,8 @@ else:
     metric_col3.metric("Region", st.session_state.connected_region or "unknown")
     metric_col4.metric("Activity events", len(st.session_state.logs))
 
-    tabs = st.tabs(["Overview", "Create Bucket", "Upload Files", "Manage Access", "Activity Logs"])
+    tabs = st.tabs(["Overview", "Create Bucket", "Upload Files", "Manage Access", "Question 4 - EC2",
+    "Question 5 - Report", "Activity Logs"])
 
     with tabs[0]:
         overview_col1, overview_col2 = st.columns([1.1, 0.9])
@@ -347,30 +360,82 @@ else:
     with tabs[2]:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         st.markdown("<div class='section-title'>Upload files</div>", unsafe_allow_html=True)
-        st.markdown("<div class='section-subtitle'>Send files to the selected bucket in one batch.</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='section-subtitle'>Upload files into ufolder or efolder inside the selected bucket.</div>",
+            unsafe_allow_html=True
+        )
 
         if not bucket_names:
             st.info("Create a bucket first to enable uploads.")
         else:
             with st.form("upload_form"):
-                selected_bucket = st.selectbox("Select Bucket", bucket_names, key="upload_bucket")
-                files = st.file_uploader("Upload Files", accept_multiple_files=True)
-                upload_submitted = st.form_submit_button("Upload", use_container_width=True)
+                selected_bucket = st.selectbox(
+                    "Select Bucket",
+                    bucket_names,
+                    key="upload_bucket"
+                )
+
+                selected_folder = st.selectbox(
+                    "Select Folder",
+                    ["ufolder", "efolder"]
+                )
+
+                files = st.file_uploader(
+                    "Upload Files",
+                    accept_multiple_files=True
+                )
+
+                upload_submitted = st.form_submit_button(
+                    "Upload",
+                    use_container_width=True
+                )
 
             if upload_submitted:
                 if not files:
                     st.warning("Choose at least one file.")
                 else:
                     try:
+                        # Create folders if they don't exist
+                        client.put_object(Bucket=selected_bucket, Key="ufolder/")
+                        client.put_object(Bucket=selected_bucket, Key="efolder/")
+
+                        # Upload into chosen folder
                         for file_obj in files:
-                            client.upload_fileobj(file_obj, selected_bucket, file_obj.name)
-                            append_log(f"Uploaded {file_obj.name} to {selected_bucket}")
-                        st.success("Upload complete")
-                        st.rerun()
+                            s3_key = f"{selected_folder}/{file_obj.name}"
+
+                            client.upload_fileobj(
+                                file_obj,
+                                selected_bucket,
+                                s3_key
+                            )
+
+                            append_log(
+                                f"Uploaded {file_obj.name} to {selected_bucket}/{selected_folder}"
+                            )
+
+                        st.success("✅ File uploaded successfully!")
+
+                        # List all objects in bucket
+                        st.subheader("Objects Stored in Bucket")
+
+                        response = client.list_objects_v2(
+                            Bucket=selected_bucket
+                        )
+
+                        if "Contents" in response:
+                            for obj in response["Contents"]:
+                                st.write(f"📄 {obj['Key']}")
+                        else:
+                            st.info("Bucket is empty.")
+
+                        append_log(
+                            f"Displayed objects in bucket {selected_bucket}"
+                        )
+
                     except Exception as e:
                         st.error(str(e))
-        st.markdown("</div>", unsafe_allow_html=True)
 
+        st.markdown("</div>", unsafe_allow_html=True)
     with tabs[3]:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
         st.markdown("<div class='section-title'>Manage access</div>", unsafe_allow_html=True)
@@ -408,6 +473,188 @@ else:
 
     with tabs[4]:
         st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        st.markdown("<div class='section-title'>Question 4 - EC2 Instance Details</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='section-subtitle'>Retrieve all running EC2 instances.</div>",
+            unsafe_allow_html=True
+        )
+
+        if st.button("Fetch Running EC2 Instances"):
+            try:
+                response = ec2_client.describe_instances()
+                found = False
+
+                for reservation in response["Reservations"]:
+                    for instance in reservation["Instances"]:
+                        if instance["State"]["Name"] == "running":
+                            found = True
+
+                            instance_id = instance["InstanceId"]
+                            instance_type = instance["InstanceType"]
+                            state = instance["State"]["Name"]
+                            public_ip = instance.get("PublicIpAddress", "N/A")
+                            az = instance["Placement"]["AvailabilityZone"]
+
+                            name = "N/A"
+                            if "Tags" in instance:
+                                for tag in instance["Tags"]:
+                                    if tag["Key"] == "Name":
+                                        name = tag["Value"]
+
+                            st.write("Instance ID:", instance_id)
+                            st.write("Instance Name:", name)
+                            st.write("Instance Type:", instance_type)
+                            st.write("Instance State:", state)
+                            st.write("Public IPv4:", public_ip)
+                            st.write("Availability Zone:", az)
+                            st.write("---")
+
+                if not found:
+                    st.info("No running EC2 instances found.")
+
+            except Exception as e:
+                st.error(str(e))
+
+    st.markdown("</div>", unsafe_allow_html=True)    
+
+
+    with tabs[5]:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+        st.markdown("<div class='section-title'>Question 5 - AWS Resource Report</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='section-subtitle'>Generate report and upload it to S3.</div>",
+            unsafe_allow_html=True
+        )
+
+        if not bucket_names:
+            st.info("No buckets available.")
+        else:
+            report_bucket = st.selectbox(
+                "Select Bucket for Report Upload",
+                bucket_names,
+                key="report_bucket"
+            )
+
+            if st.button("Generate Resource Report"):
+                try:
+                    report_lines = []
+                    report_lines.append("AWS RESOURCE REPORT")
+                    report_lines.append("=" * 60)
+
+                    # ======================
+                    # S3 DETAILS
+                    # ======================
+                    report_lines.append("\nS3 BUCKET DETAILS")
+                    report_lines.append(f"Bucket Name: {report_bucket}")
+                    report_lines.append("-" * 60)
+
+                    response = client.list_objects_v2(Bucket=report_bucket)
+
+                    if "Contents" in response:
+                        for obj in response["Contents"]:
+                            key = obj["Key"]
+                            size = obj["Size"]
+
+                            folder = key.split("/")[0] if "/" in key else "root"
+
+                            report_lines.append(f"Folder Name : {folder}")
+                            report_lines.append(f"Object Name : {key}")
+                            report_lines.append(f"Object Size : {size} bytes")
+                            report_lines.append("-" * 40)
+                    else:
+                        report_lines.append("Bucket is empty.")
+
+                    # ======================
+                    # EC2 DETAILS
+                    # ======================
+                    report_lines.append("\nEC2 INSTANCE DETAILS")
+                    report_lines.append("-" * 60)
+
+                    ec2_response = ec2_client.describe_instances()
+                    found = False
+
+                    for reservation in ec2_response["Reservations"]:
+                        for instance in reservation["Instances"]:
+                            if instance["State"]["Name"] == "running":
+                                found = True
+
+                                instance_id = instance["InstanceId"]
+                                instance_type = instance["InstanceType"]
+                                state = instance["State"]["Name"]
+                                public_ip = instance.get("PublicIpAddress", "N/A")
+                                az = instance["Placement"]["AvailabilityZone"]
+
+                                name = "N/A"
+                                if "Tags" in instance:
+                                    for tag in instance["Tags"]:
+                                        if tag["Key"] == "Name":
+                                            name = tag["Value"]
+
+                                report_lines.append(f"Instance ID   : {instance_id}")
+                                report_lines.append(f"Instance Name : {name}")
+                                report_lines.append(f"Instance Type : {instance_type}")
+                                report_lines.append(f"State         : {state}")
+                                report_lines.append(f"Public IP     : {public_ip}")
+                                report_lines.append(f"AZ            : {az}")
+                                report_lines.append("-" * 40)
+
+                    if not found:
+                        report_lines.append("No running EC2 instances found.")
+
+                    # ======================
+                    # WRITE REPORT
+                    # ======================
+                    filename = "aws_resource_report.txt"
+                    report_text = "\n".join(report_lines)
+
+                    with open(filename, "w") as f:
+                        f.write(report_text)
+
+                    # ======================
+                    # UPLOAD REPORT TO S3
+                    # ======================
+                    client.upload_file(
+                        filename,
+                        report_bucket,
+                        filename
+                    )
+
+                    st.success("✅ Report generated and uploaded successfully!")
+
+                    append_log(
+                        f"Generated and uploaded {filename} to {report_bucket}"
+                    )
+
+                    # Verify upload
+                    verify = client.list_objects_v2(Bucket=report_bucket)
+                    uploaded = False
+
+                    if "Contents" in verify:
+                        for obj in verify["Contents"]:
+                            if obj["Key"] == filename:
+                                uploaded = True
+                                break
+
+                    if uploaded:
+                        st.success("✅ Upload verification successful!")
+                    else:
+                        st.error("Upload verification failed.")
+
+                    st.subheader("Report Preview")
+                    st.text_area(
+                        "AWS Resource Report",
+                        report_text,
+                        height=450
+                    )
+
+                except Exception as e:
+                    st.error(str(e))
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    with tabs[6]:
+        st.markdown("<div class='panel'>", unsafe_allow_html=True)
+
         st.markdown("<div class='section-title'>Activity log</div>", unsafe_allow_html=True)
         st.markdown("<div class='section-subtitle'>Recent actions are preserved for the current session.</div>", unsafe_allow_html=True)
         if st.session_state.logs:
